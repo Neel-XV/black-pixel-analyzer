@@ -20,13 +20,14 @@ Black Pixel Analyzer is a Python application designed to analyze and optimize im
 
 1. Clone the repository
 
-  ```
+  ```bash
   git clone https://github.com/Neel-XV/black-pixel-analyzer.git
+  cd black-pixel-analyzer
   ```
 
 2. Install dependencies:
 
-  ```
+  ```bash
   pip install -r requirements.txt
   ```
 
@@ -34,7 +35,7 @@ Black Pixel Analyzer is a Python application designed to analyze and optimize im
 
 Run the application:
 
-```
+```bash
 python black_pixel_converter.py
 ```
 
@@ -59,4 +60,4 @@ Contributions welcome! Submit Pull Requests.
 
 ## License
 
-[MIT licensed](./LICENSE)
+[MIT License](./LICENSE)
