@@ -1,21 +1,21 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import wasm from "vite-plugin-wasm";
-import topLevelAwait from "vite-plugin-top-level-await";
 
 // https://vitejs.dev/config/
+// Note: vite-plugin-top-level-await is intentionally omitted.
+// With target: "esnext", Vite/Rollup natively supports top-level await.
+// The plugin crashes on Node 24 / newer @swc/core (missing `type` field).
 export default defineConfig({
   plugins: [
     react(),
     wasm(),
-    topLevelAwait(), // allows `await init()` at module top level
   ],
   build: {
-    target: "esnext", // required for WASM + top-level-await
+    target: "esnext", // enables native WASM + top-level-await support
   },
   server: {
     headers: {
-      // Required for SharedArrayBuffer (if we ever add workers), harmless otherwise
       "Cross-Origin-Opener-Policy": "same-origin",
       "Cross-Origin-Embedder-Policy": "require-corp",
     },
