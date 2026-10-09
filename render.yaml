@@ -3,12 +3,12 @@ services:
     name: black-pixel-analyzer
     runtime: static
     buildCommand: |
-      # Install Rust + wasm-pack if not cached by Render
-      curl https://sh.rustup.rs -sSf | sh -s -- -y --default-toolchain stable
-      export PATH="$HOME/.cargo/bin:$PATH"
+      # Render ships Rust pre-installed at /usr/local/cargo/bin (read-only).
+      # Skip the rustup installer — just add it to PATH, add the WASM target,
+      # install wasm-pack, then build.
+      export PATH="/usr/local/cargo/bin:$PATH"
       rustup target add wasm32-unknown-unknown
       curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
-      # Install JS deps and build
       cd web
       npm ci
       npm run build
