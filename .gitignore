@@ -1,0 +1,14 @@
+# Rust build artifacts
+/target/
+crates/*/target/
+
+# wasm-pack output (generated — don't commit)
+web/src/wasm/
+
+# Node / Vite
+web/node_modules/
+web/dist/
+
+# OS
+.DS_Store
+Thumbs.db
