@@ -3,7 +3,7 @@ import { useWasm } from "./hooks/useWasm";
 import { useImageLoader } from "./hooks/useImageLoader";
 import "./App.css";
 
-// ─── Debounce helper ────────────────────────────────────────────────────────
+// ─── Debounce helper ─────────────────────────────────────────────────────────
 function useDebounce(fn, delay) {
   const timer = useRef(null);
   return useCallback(
@@ -15,7 +15,19 @@ function useDebounce(fn, delay) {
   );
 }
 
-// ─── Main App ────────────────────────────────────────────────────────────────
+// ─── Preset thresholds ───────────────────────────────────────────────────────
+const PRESETS = [
+  { label: "Off",    value: 0,   tip: "No change" },
+  { label: "Subtle", value: 16,  tip: "Very dark pixels only" },
+  { label: "Light",  value: 32,  tip: "Near-black (default)" },
+  { label: "Medium", value: 64,  tip: "Dark grays" },
+  { label: "Strong", value: 96,  tip: "Mid-dark grays" },
+  { label: "Heavy",  value: 128, tip: "Half-range" },
+];
+
+const DEFAULT_THRESHOLD = 32;
+
+// ─── Main App ─────────────────────────────────────────────────────────────────
 export default function App() {
   const { wasm, loading: wasmLoading, error: wasmError } = useWasm();
   const { loadImage, toDataUrl } = useImageLoader();
@@ -23,31 +35,30 @@ export default function App() {
   // Image state
   const [originalDataUrl, setOriginalDataUrl] = useState(null);
   const [processedDataUrl, setProcessedDataUrl] = useState(null);
-  const [imageData, setImageData] = useState(null); // raw RGBA Uint8Array
+  const [imageData, setImageData] = useState(null);
   const [imageDims, setImageDims] = useState({ width: 0, height: 0 });
+  const [fileName, setFileName] = useState("");
 
   // Analysis state
   const [originalPct, setOriginalPct] = useState(null);
   const [processedPct, setProcessedPct] = useState(null);
-  const [threshold, setThreshold] = useState(32);
+  const [threshold, setThreshold] = useState(DEFAULT_THRESHOLD);
 
   // UI state
   const [processing, setProcessing] = useState(false);
   const [dragging, setDragging] = useState(false);
-  const [tab, setTab] = useState("analyze"); // "analyze" | "blackify"
   const [downloadUrl, setDownloadUrl] = useState(null);
+  const [showComparison, setShowComparison] = useState(false);
 
-  // ── Process image with WASM ──────────────────────────────────────────────
+  // ── Process image with WASM ─────────────────────────────────────────────
   const processWithWasm = useCallback(
     async (rawData, width, height, thresh) => {
       if (!wasm || !rawData) return;
       setProcessing(true);
       try {
-        // WASM call: blackify + analyze in one round-trip
         const result = wasm.blackify_and_analyze(rawData, thresh, width, height);
-        const processedBytes = result[0]; // Uint8Array
-        const pct = result[1]; // f64
-
+        const processedBytes = result[0];
+        const pct = result[1];
         const url = toDataUrl(processedBytes, width, height);
         setProcessedDataUrl(url);
         setProcessedPct(pct);
@@ -61,41 +72,54 @@ export default function App() {
 
   const debouncedProcess = useDebounce(processWithWasm, 80);
 
-  // Re-process whenever threshold changes
   useEffect(() => {
     if (imageData) {
       debouncedProcess(imageData, imageDims.width, imageDims.height, threshold);
     }
   }, [threshold, imageData, imageDims, debouncedProcess]);
 
-  // ── File loading ─────────────────────────────────────────────────────────
+  // ── File loading ────────────────────────────────────────────────────────
   const handleFile = useCallback(
     async (file) => {
       if (!file || !wasm) return;
       const { imageData: imgData, dataUrl, width, height } = await loadImage(file);
-
-      const rawData = imgData.data; // Uint8ClampedArray
-
-      // Analyze original black pixel %
+      const rawData = imgData.data;
       const pct = wasm.analyze(rawData, width, height);
 
       setOriginalDataUrl(dataUrl);
       setOriginalPct(pct);
       setImageData(rawData);
       setImageDims({ width, height });
+      setFileName(file.name);
       setProcessedDataUrl(null);
       setProcessedPct(null);
       setDownloadUrl(null);
-
-      // Trigger initial blackify
-      processWithWasm(rawData, width, height, threshold);
+      setThreshold(DEFAULT_THRESHOLD);
+      setShowComparison(false);
+      processWithWasm(rawData, width, height, DEFAULT_THRESHOLD);
     },
-    [wasm, loadImage, threshold, processWithWasm]
+    [wasm, loadImage, processWithWasm]
   );
+
+  // ── Reset ────────────────────────────────────────────────────────────────
+  const handleReset = () => {
+    setOriginalDataUrl(null);
+    setProcessedDataUrl(null);
+    setImageData(null);
+    setImageDims({ width: 0, height: 0 });
+    setFileName("");
+    setOriginalPct(null);
+    setProcessedPct(null);
+    setThreshold(DEFAULT_THRESHOLD);
+    setDownloadUrl(null);
+    setProcessing(false);
+    setShowComparison(false);
+  };
 
   const onFileInput = (e) => {
     const file = e.target.files?.[0];
     if (file) handleFile(file);
+    e.target.value = "";
   };
 
   const onDrop = (e) => {
@@ -105,179 +129,252 @@ export default function App() {
     if (file) handleFile(file);
   };
 
-  // ── Render ────────────────────────────────────────────────────────────────
+  const gain = processedPct !== null && originalPct !== null
+    ? (processedPct - originalPct).toFixed(1)
+    : null;
+
+  // ── Render ─────────────────────────────────────────────────────────────
   return (
     <div className="app">
-      <header className="header">
-        <h1>
-          <span className="icon">◼</span> Black Pixel Analyzer
-        </h1>
-        <p className="subtitle">
-          AMOLED screen optimizer — powered by Rust ⚙️ WebAssembly
-        </p>
-        {wasmLoading && <span className="badge loading">Loading WASM…</span>}
-        {wasmError && (
-          <span className="badge error">WASM failed: {wasmError.message}</span>
-        )}
-        {!wasmLoading && !wasmError && (
-          <span className="badge ready">WASM ready</span>
-        )}
+
+      {/* ── Top bar ─────────────────────────────────────────────────── */}
+      <header className="topbar">
+        <div className="topbar-brand">
+          <span className="brand-icon" aria-hidden>◼</span>
+          <span className="brand-name">Black Pixel Analyzer</span>
+          <span className="brand-sub">for AMOLED</span>
+        </div>
+        <div className="topbar-right">
+          <WasmPill loading={wasmLoading} error={wasmError} />
+          {originalDataUrl && (
+            <button className="btn-reset" onClick={handleReset} title="Start over">
+              ✕ Reset
+            </button>
+          )}
+        </div>
       </header>
 
-      {/* ── Drop zone ──────────────────────────────────────────────────── */}
-      <section
-        className={`dropzone ${dragging ? "dragging" : ""}`}
-        onDragOver={(e) => {
-          e.preventDefault();
-          setDragging(true);
-        }}
-        onDragLeave={() => setDragging(false)}
-        onDrop={onDrop}
-      >
-        <input
-          id="file-input"
-          type="file"
-          accept="image/png,image/jpeg,image/webp,image/bmp,image/gif"
-          onChange={onFileInput}
-          style={{ display: "none" }}
-        />
-        <label htmlFor="file-input" className="dropzone-label">
-          {originalDataUrl ? (
-            <span>📂 Drop another image or click to change</span>
-          ) : (
-            <span>📂 Drop an image here, or click to select</span>
-          )}
-        </label>
-      </section>
+      {/* ── Drop zone ────────────────────────────────────────────────── */}
+      {!originalDataUrl ? (
+        <section
+          className={`dropzone ${dragging ? "dragging" : ""}`}
+          onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
+          onDragLeave={() => setDragging(false)}
+          onDrop={onDrop}
+        >
+          <input
+            id="file-input"
+            type="file"
+            accept="image/png,image/jpeg,image/webp,image/bmp,image/gif"
+            onChange={onFileInput}
+            style={{ display: "none" }}
+          />
+          <label htmlFor="file-input" className="dropzone-label">
+            <span className="dz-icon">🖼️</span>
+            <span className="dz-primary">Drop an image here</span>
+            <span className="dz-secondary">or <u>click to browse</u> — PNG, JPEG, WebP, BMP</span>
+          </label>
+        </section>
+      ) : (
+        /* ── Main workspace ──────────────────────────────────────────── */
+        <div className="workspace">
 
-      {/* ── Tabs ───────────────────────────────────────────────────────── */}
-      {originalDataUrl && (
-        <>
-          <nav className="tabs">
-            <button
-              className={tab === "analyze" ? "active" : ""}
-              onClick={() => setTab("analyze")}
-            >
-              📊 Analyze
-            </button>
-            <button
-              className={tab === "blackify" ? "active" : ""}
-              onClick={() => setTab("blackify")}
-            >
-              🎨 Blackify
-            </button>
-          </nav>
+          {/* ── File info bar ─────────────────────────────────────────── */}
+          <div className="file-bar">
+            <span className="file-name">📄 {fileName}</span>
+            <span className="file-dims">{imageDims.width} × {imageDims.height}px</span>
+            <label htmlFor="file-input" className="btn-ghost">
+              Change image
+            </label>
+            <input
+              id="file-input"
+              type="file"
+              accept="image/png,image/jpeg,image/webp,image/bmp,image/gif"
+              onChange={onFileInput}
+              style={{ display: "none" }}
+            />
+          </div>
 
-          {/* ── Analyze tab ──────────────────────────────────────────── */}
-          {tab === "analyze" && (
-            <section className="panel">
-              <div className="stat-grid">
+          {/* ── Stats row ─────────────────────────────────────────────── */}
+          <div className="stats-row">
+            <StatCard
+              icon="◻"
+              label="Original black pixels"
+              value={originalPct !== null ? `${originalPct.toFixed(2)}%` : "—"}
+              color="muted"
+            />
+            <div className="stats-arrow">→</div>
+            <StatCard
+              icon="◼"
+              label="After blackify"
+              value={processedPct !== null ? `${processedPct.toFixed(2)}%` : "—"}
+              color="accent"
+              loading={processing}
+            />
+            {gain !== null && Number(gain) > 0 && (
+              <>
+                <div className="stats-arrow">+</div>
                 <StatCard
-                  label="Original black pixels"
-                  value={
-                    originalPct !== null ? `${originalPct.toFixed(2)}%` : "—"
-                  }
+                  icon="⚡"
+                  label="AMOLED power gain"
+                  value={`+${gain}%`}
+                  color="green"
                 />
-                <StatCard
-                  label={`After blackify (threshold ${threshold})`}
-                  value={
-                    processedPct !== null ? `${processedPct.toFixed(2)}%` : "—"
-                  }
-                  highlight
-                />
-              </div>
-              <div className="image-row">
-                <ImageCard label="Original" src={originalDataUrl} />
-                {processedDataUrl && (
-                  <ImageCard label="Processed" src={processedDataUrl} />
-                )}
-              </div>
-            </section>
-          )}
+              </>
+            )}
+          </div>
 
-          {/* ── Blackify tab ─────────────────────────────────────────── */}
-          {tab === "blackify" && (
-            <section className="panel">
-              <div className="threshold-control">
-                <label htmlFor="threshold-slider">
-                  Threshold:{" "}
-                  <strong>{threshold}</strong>
-                  <span className="hint">
-                    &nbsp;— pixels with R, G, B ≤ {threshold} → pure black
-                  </span>
-                </label>
+          {/* ── Threshold control ─────────────────────────────────────── */}
+          <div className="control-card">
+            <div className="control-header">
+              <div>
+                <h2 className="control-title">Blackify Threshold</h2>
+                <p className="control-desc">
+                  Pixels where R, G, B are all ≤ <strong>{threshold}</strong> will become pure black
+                </p>
+              </div>
+              <div className="threshold-badge">{threshold}</div>
+            </div>
+
+            {/* Preset pills */}
+            <div className="presets">
+              {PRESETS.map((p) => (
+                <button
+                  key={p.value}
+                  className={`preset-pill ${threshold === p.value ? "active" : ""}`}
+                  onClick={() => setThreshold(p.value)}
+                  title={p.tip}
+                >
+                  {p.label}
+                </button>
+              ))}
+            </div>
+
+            {/* Slider */}
+            <div className="slider-wrap">
+              <span className="slider-edge">0</span>
+              <div className="slider-track-wrap">
                 <input
-                  id="threshold-slider"
                   type="range"
                   min={0}
                   max={255}
+                  step={1}
                   value={threshold}
                   onChange={(e) => setThreshold(Number(e.target.value))}
                   className="slider"
+                  style={{ "--pct": `${(threshold / 255) * 100}%` }}
                 />
+                {/* Tick marks at preset positions */}
+                <div className="slider-ticks" aria-hidden>
+                  {PRESETS.filter(p => p.value > 0).map((p) => (
+                    <span
+                      key={p.value}
+                      className="tick"
+                      style={{ left: `${(p.value / 255) * 100}%` }}
+                      title={p.label}
+                    />
+                  ))}
+                </div>
               </div>
+              <span className="slider-edge">255</span>
+            </div>
 
-              {processing && (
-                <p className="processing-msg">⚙️ Processing with WASM…</p>
-              )}
-
-              <div className="stat-grid">
-                <StatCard
-                  label="Original black pixels"
-                  value={
-                    originalPct !== null ? `${originalPct.toFixed(2)}%` : "—"
-                  }
-                />
-                <StatCard
-                  label="After blackify"
-                  value={
-                    processedPct !== null ? `${processedPct.toFixed(2)}%` : "—"
-                  }
-                  highlight
-                />
+            {processing && (
+              <div className="processing-row">
+                <span className="spinner" />
+                <span>Processing…</span>
               </div>
+            )}
+          </div>
 
+          {/* ── Image comparison ─────────────────────────────────────── */}
+          <div className="image-section">
+            <div className="image-section-header">
+              <h2 className="section-title">Preview</h2>
+              <button
+                className={`btn-ghost toggle-compare ${showComparison ? "active" : ""}`}
+                onClick={() => setShowComparison((v) => !v)}
+              >
+                {showComparison ? "Single view" : "Side by side"}
+              </button>
+            </div>
+
+            {showComparison ? (
               <div className="image-row">
-                <ImageCard label="Original" src={originalDataUrl} />
+                <ImageCard label="Original" src={originalDataUrl} badge={`${originalPct?.toFixed(1)}% black`} />
                 {processedDataUrl && (
-                  <ImageCard label={`Blackified (t=${threshold})`} src={processedDataUrl} />
+                  <ImageCard
+                    label={`Blackified (t=${threshold})`}
+                    src={processedDataUrl}
+                    badge={`${processedPct?.toFixed(1)}% black`}
+                    accent
+                  />
                 )}
               </div>
+            ) : (
+              <div className="image-single">
+                {processedDataUrl ? (
+                  <ImageCard
+                    label={`Blackified (threshold ${threshold})`}
+                    src={processedDataUrl}
+                    badge={`${processedPct?.toFixed(1)}% black`}
+                    accent
+                    wide
+                  />
+                ) : (
+                  <ImageCard label="Original" src={originalDataUrl} badge={`${originalPct?.toFixed(1)}% black`} wide />
+                )}
+              </div>
+            )}
+          </div>
 
-              {downloadUrl && (
-                <div className="download-row">
-                  <a
-                    href={downloadUrl}
-                    download="blackified.png"
-                    className="btn-download"
-                  >
-                    ⬇️ Download processed image
-                  </a>
-                </div>
-              )}
-            </section>
+          {/* ── Action bar ───────────────────────────────────────────── */}
+          {downloadUrl && (
+            <div className="action-bar">
+              <button className="btn-ghost" onClick={handleReset}>
+                ✕ Reset & start over
+              </button>
+              <a href={downloadUrl} download="blackified.png" className="btn-download">
+                ⬇ Download blackified image
+              </a>
+            </div>
           )}
-        </>
+        </div>
       )}
+
+      {/* ── Footer ──────────────────────────────────────────────────── */}
+      <footer className="footer">
+        Runs 100% in your browser — no uploads, no server · Powered by Rust + WebAssembly
+      </footer>
     </div>
   );
 }
 
-// ─── Sub-components ──────────────────────────────────────────────────────────
+// ─── Sub-components ───────────────────────────────────────────────────────────
 
-function StatCard({ label, value, highlight }) {
+function WasmPill({ loading, error }) {
+  if (loading) return <span className="wasm-pill loading">⏳ Loading engine…</span>;
+  if (error)   return <span className="wasm-pill error">⚠ WASM error</span>;
+  return <span className="wasm-pill ready">⚙ WASM ready</span>;
+}
+
+function StatCard({ icon, label, value, color, loading }) {
   return (
-    <div className={`stat-card ${highlight ? "highlight" : ""}`}>
-      <span className="stat-value">{value}</span>
+    <div className={`stat-card stat-${color}`}>
+      <span className="stat-icon" aria-hidden>{icon}</span>
+      <span className={`stat-value ${loading ? "stat-loading" : ""}`}>{value}</span>
       <span className="stat-label">{label}</span>
     </div>
   );
 }
 
-function ImageCard({ label, src }) {
+function ImageCard({ label, src, badge, accent, wide }) {
   return (
-    <figure className="image-card">
-      <img src={src} alt={label} />
+    <figure className={`image-card ${accent ? "image-accent" : ""} ${wide ? "image-wide" : ""}`}>
+      <div className="image-wrap">
+        <img src={src} alt={label} />
+        {badge && <span className="image-badge">{badge}</span>}
+      </div>
       <figcaption>{label}</figcaption>
     </figure>
   );
