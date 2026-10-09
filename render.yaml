@@ -3,15 +3,19 @@ services:
     name: black-pixel-analyzer
     runtime: static
     buildCommand: |
-      # Render ships Rust at /usr/local/cargo/bin but it is READ-ONLY.
-      # Add it to PATH for rustc/cargo, then redirect CARGO_HOME so that
-      # wasm-pack can be installed into a writable user directory.
+      # Render's /usr/local/cargo/bin is READ-ONLY — skip rustup re-install,
+      # just add it to PATH for rustc/cargo.
       export PATH="/usr/local/cargo/bin:$PATH"
       rustup target add wasm32-unknown-unknown
-      export CARGO_HOME="$HOME/.local/cargo"
-      mkdir -p "$CARGO_HOME/bin"
-      curl -sSf https://rustwasm.github.io/wasm-pack/installer/init.sh | sh
-      export PATH="$CARGO_HOME/bin:$PATH"
+
+      # The wasm-pack installer hardcodes /usr/local/cargo/bin and ignores
+      # CARGO_HOME, so bypass it: download the prebuilt musl binary directly.
+      mkdir -p "$HOME/bin"
+      curl -sSL "https://github.com/rustwasm/wasm-pack/releases/download/v0.13.1/wasm-pack-v0.13.1-x86_64-unknown-linux-musl.tar.gz" \
+        | tar -xz --strip-components=1 -C "$HOME/bin"
+      chmod +x "$HOME/bin/wasm-pack"
+      export PATH="$HOME/bin:$PATH"
+
       cd web
       npm ci
       npm run build
