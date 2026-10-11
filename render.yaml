@@ -22,13 +22,14 @@ services:
     staticPublishPath: web/dist
     pullRequestPreviewsEnabled: true
     headers:
-      # Required for WASM modules to load correctly in all browsers
-      - path: "/*"
-        name: Cross-Origin-Opener-Policy
-        value: same-origin
-      - path: "/*"
-        name: Cross-Origin-Embedder-Policy
-        value: require-corp
+      # Serve .wasm files with the correct MIME type (required by browsers)
+      - path: "/*.wasm"
+        name: Content-Type
+        value: application/wasm
+      # Long-lived cache for hashed assets (Vite appends content hash to filenames)
+      - path: "/assets/*"
+        name: Cache-Control
+        value: public, max-age=31536000, immutable
     routes:
       # SPA fallback — all routes serve index.html
       - type: rewrite

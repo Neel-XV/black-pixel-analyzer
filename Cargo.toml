@@ -1,3 +1,10 @@
 [workspace]
 members = ["crates/pixel-engine"]
 resolver = "2"
+
+# C8: Profile must live at workspace root — crate-level profiles are ignored by Cargo.
+[profile.release]
+lto = true            # link-time optimisation (smaller, faster WASM)
+opt-level = 3         # max speed for pixel loops (use "s" if bundle size is priority)
+panic = "abort"       # no unwinding machinery in WASM binary
+codegen-units = 1     # single CGU maximises inlining across the crate

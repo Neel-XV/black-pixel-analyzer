@@ -14,10 +14,5 @@ js-sys = "0.3"
 [dev-dependencies]
 wasm-bindgen-test = "0.3"
 
-[profile.release]
-# Enable link-time optimisation for smaller WASM output
-lto = true
-# Optimise for size (s) or speed (3) — "s" is better for initial WASM bundle size
-opt-level = "s"
-# Abort on panic instead of unwinding — keeps WASM smaller
-panic = "abort"
+# NOTE: [profile.release] removed from here — it was silently ignored by Cargo
+# because profiles must be declared in the workspace root Cargo.toml (C8).
