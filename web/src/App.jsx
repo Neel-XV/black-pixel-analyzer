@@ -44,6 +44,10 @@ export default function App() {
   const objectUrlRef     = useRef(null); // revocable URL for original <img>
   const rafRef           = useRef(null); // current rAF handle
   const reqIdRef         = useRef(0);    // stale-work cancellation counter (B3)
+  // Dims stored in a ref so applyThreshold can read them synchronously
+  // without depending on React state (which may lag behind on first render).
+  const imageDimsRef     = useRef({ width: 0, height: 0 });
+
 
   // ── React state: only UI-visible data, never pixel buffers ──────────────
   const [hasImage,      setHasImage]      = useState(false);
@@ -65,6 +69,18 @@ export default function App() {
       if (reqId !== reqIdRef.current) return; // stale — discard (B3)
       const canvas = previewCanvasRef.current;
       if (!canvas || !srcDataRef.current) return;
+
+      // Always sync canvas pixel dimensions before painting.
+      // On first image load the canvas mounts AFTER handleFile runs (hasImage
+      // flips from false→true), so its width/height are still the browser
+      // defaults (300×150). Reading from imageDimsRef (set synchronously in
+      // handleFile before any await) ensures we always get the right size.
+      const { width, height } = imageDimsRef.current;
+      if (width && height && (canvas.width !== width || canvas.height !== height)) {
+        canvas.width  = width;
+        canvas.height = height;
+      }
+
       const ctx = canvas.getContext("2d");
       engine.applyToCanvas(srcDataRef.current, ctx, thresh);
       // Update the processed % stat (instant from histogram)
@@ -72,6 +88,7 @@ export default function App() {
     },
     [engine]
   );
+
 
   // ── Schedule an rAF-throttled preview update (C7) ────────────────────────
   const scheduleUpdate = useCallback(
@@ -116,6 +133,11 @@ export default function App() {
         // Decode: returns objectUrl (for <img>) + raw ImageData (for WASM)
         const { objectUrl, imageData, width, height } = await loadImage(file);
 
+        // Store image dims in a ref NOW — applyThreshold reads this
+        // synchronously to resize the canvas before every putImageData.
+        // This must be set before the rAF is scheduled (below).
+        imageDimsRef.current = { width, height };
+
         // Store for hot path (C1 — no copy into React state)
         objectUrlRef.current = objectUrl;
         srcDataRef.current   = imageData.data;
@@ -123,7 +145,10 @@ export default function App() {
         // Initialise histogram + output buffer (C5, C6 — once per image)
         engine.initImage(imageData.data, width, height);
 
-        // Size the preview canvas to match image (no CSS distortion)
+        // Best-effort canvas resize — works on "Change image" where the canvas
+        // is already mounted. On first load (hasImage=false) the canvas isn't in
+        // the DOM yet so previewCanvasRef.current is null; applyThreshold handles
+        // that case via imageDimsRef above.
         const canvas = previewCanvasRef.current;
         if (canvas) {
           canvas.width  = width;
@@ -133,11 +158,10 @@ export default function App() {
         // Original black pixel % = histogram bin 0 / total opaque (instant)
         const origPct = engine.pctAt(0);
 
-        // Apply initial threshold (C4: only one call — effect removed) (C4)
-        const initReqId = ++reqIdRef.current;
-        requestAnimationFrame(() => applyThreshold(DEFAULT_THRESHOLD, initReqId));
-
-        // Update React state (display-only values)
+        // Update React state first so React renders the canvas into the DOM,
+        // THEN schedule the rAF so it fires after the commit phase.
+        // (On first load: hasImage false→true triggers render → canvas mounts
+        //  → next rAF fires → applyThreshold syncs dims → paints correctly.)
         setOrigUrl(objectUrl);
         setFileName(file.name);
         setDims({ width, height });
@@ -146,12 +170,19 @@ export default function App() {
         setProcessedPct(engine.pctAt(DEFAULT_THRESHOLD));
         setHasImage(true);
         setShowSideBySide(false);
+
+        // Schedule paint AFTER state updates — React batches the above setState
+        // calls and commits them synchronously before the next rAF fires.
+        const initReqId = ++reqIdRef.current;
+        requestAnimationFrame(() => applyThreshold(DEFAULT_THRESHOLD, initReqId));
+
       } catch (err) {
         setError(err.message); // C13: user-visible error
       }
     },
     [wasm, loadImage, engine, applyThreshold]
   );
+
 
   // ── Reset ──────────────────────────────────────────────────────────────────
   const handleReset = useCallback(() => {
@@ -160,7 +191,8 @@ export default function App() {
       URL.revokeObjectURL(objectUrlRef.current); // free memory
       objectUrlRef.current = null;
     }
-    srcDataRef.current = null;
+    srcDataRef.current     = null;
+    imageDimsRef.current   = { width: 0, height: 0 };
     engine.reset();
 
     setHasImage(false);
